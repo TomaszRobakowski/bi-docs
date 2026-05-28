@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Working Adobe Target + OneTrust Demo</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./target-config.js"></script>
+
+  <script>
+    document.cookie = "checked=target-demo; path=/; max-age=1800; SameSite=Lax";
+
+    window.TargetDemoState = {
+      targetStatus: "booting",
+      identityStatus: "waiting",
+      targetThirdPartyId: "",
+      consentGroups: "",
+      analyticsEvents: []
+    };
+
+    window.analytics = window.analytics || [];
+    window.analytics.track = function (eventName, properties) {
+      window.TargetDemoState.analyticsEvents.push({
+        event: eventName,
+        properties: properties || {},
+        timestamp: new Date().toISOString()
+      });
+      if (typeof window.renderTargetDemoStatus === "function") {
+        window.renderTargetDemoStatus();
+      }
+    };
+
+    window.TargetAnalyticsConfig = {
+      eventName: "Adobe Target Decision",
+      properties: {
+        experienceName: "experience_name",
+        experienceType: "experience_type"
+      },
+      counterEvent: "event222",
+      onDecision: function (record) {
+        window.TargetDemoState.analyticsEvents.push({
+          event: record.event,
+          properties: record.payload,
+          timestamp: record.timestamp,
+          method: window.metaTagger && typeof window.metaTagger.track === "function" ? "metaTagger.track" : "analytics.track fallback"
+        });
+        if (typeof window.renderTargetDemoStatus === "function") {
+          window.renderTargetDemoStatus();
+        }
+      },
+      onMissingRequiredToken: function (info) {
+        window.TargetDemoState.analyticsEvents.push({
+          event: "Adobe Target Decision blocked",
+          properties: info.payload,
+          missing: info.missing,
+          rawToken: info.rawToken,
+          timestamp: new Date().toISOString(),
+          method: "not sent to metaTagger.track"
+        });
+        if (typeof window.renderTargetDemoStatus === "function") {
+          window.renderTargetDemoStatus();
+        }
+      }
+    };
+
+    if (!window.TargetProjectConfig || !window.TargetProjectConfig.atProperty) {
+      throw new Error("Missing target-config.js. Run ./scripts/build.sh and deploy dist/.");
+    }
+
+    window.AdobeTargetConsentConfig = {
+      categoryId: window.TargetProjectConfig.targetCategoryId,
+      targetSrc: window.TargetProjectConfig.targetScriptUrl || "./at.js",
+      propertyToken: window.TargetProjectConfig.atProperty,
+      pageCheck: "target-demo",
+      identityTimeout: 1500,
+      requireMetaRouterIdentity: true,
+      onStatus: function (status) {
+        window.TargetDemoState.targetStatus = status;
+        if (typeof window.renderTargetDemoStatus === "function") {
+          window.renderTargetDemoStatus();
+        }
+      }
+    };
+
+    window.AdobeTargetIdentityConfig = {
+      timeout: 1500,
+      onStatus: function (state) {
+        window.TargetDemoState.identityStatus = state.status;
+        window.TargetDemoState.targetThirdPartyId = state.thirdPartyId || "";
+        if (typeof window.renderTargetDemoStatus === "function") {
+          window.renderTargetDemoStatus();
+        }
+      }
+    };
+
+    window.AdobeTargetFlickerConfig = {
+      categoryId: window.TargetProjectConfig.targetCategoryId,
+      selector: "#target-hero-message",
+      timeout: 3000
+    };
+  </script>
+
+  <script src="./scripts/adobe-target-flicker-handler.js?v=20260520-identity"></script>
+  <script src="./scripts/onetrust-loader.js?v=20260528-env"></script>
+  <script src="./scripts/target-consent-wrapper.js?v=20260520-identity"></script>
+  <script src="./scripts/metarouter-loader.js?v=20260520-identity"></script>
+  <script src="./scripts/adobe-target-identity.js?v=20260520-identity"></script>
+  <script src="./scripts/metarouter-target-bridge.js?v=20260520-identity"></script>
+  <script src="./scripts/adobe-target-injection.js?v=20260520-identity"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="mark">DE</span>
+        <div>
+          <p class="brand-title">Working Demo</p>
+          <p class="brand-subtitle">OneTrust-gated Adobe Target</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Project pages">
+        <a href="./index.html">Guide</a>
+        <a href="./target-demo.html">Working Demo</a>
+        <a href="./analytics-workspace-guide.html">Workspace Guide</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Target-controlled area</p>
+      <h1>Adobe Target should evaluate and modify the block below after consent</h1>
+      <p class="lead">This page loads OneTrust first, then injects Adobe Target through a reusable consent wrapper. Target response tokens are forwarded through the dedicated `metaTagger.track()` method.</p>
+      <div class="target-zone" id="target-hero-message" data-variant="a">
+        <strong>Default hero message</strong>
+        <span>This is the default content. A Target activity can replace this copy, change styling, or inject a different CTA.</span>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <h2>Live status</h2>
+        <div class="status-list">
+          <div class="status-item">
+            <span class="status-label">Consent groups</span>
+            <span class="status-value" id="consentGroups">Waiting</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Target loader</span>
+            <span class="status-value" id="targetStatus">Booting</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Adobe Target version</span>
+            <span class="status-value" id="targetVersion">Not loaded</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Identity readiness</span>
+            <span class="status-value" id="identityStatus">Waiting</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">MetaRouter anonymous ID</span>
+            <span class="status-value" id="metarouterAnonymousId">Waiting</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Target mbox3rdPartyId</span>
+            <span class="status-value" id="targetThirdPartyId">Waiting</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Analytics events queued</span>
+            <span class="status-value" id="analyticsCount">0</span>
+          </div>
+        </div>
+        <div class="pill-row">
+          <button class="button primary" type="button" id="simulateTargetDecision">Simulate Target response token</button>
+          <button class="button" type="button" id="openPreferences">Cookie settings</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Expected behavior</h2>
+        <ol>
+          <li>Before consent, Adobe Target should not load.</li>
+          <li>After the configured Target consent category is granted, the wrapper waits for the MetaRouter anonymous ID.</li>
+          <li>The wrapper passes that ID to Target as `mbox3rdPartyId`, then injects `at.js`.</li>
+          <li>When Target returns a decision, the bridge reads response tokens.</li>
+          <li>The bridge sends normalized properties to `metaTagger.track()` for MetaRouter mapping.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="card band">
+      <h2>Target identity stitching</h2>
+      <p>The identity stitching layer is separate from the Target exposure payload. MetaRouter keeps sending `experience_name`, `experience_type`, and `event222` exactly as before. The additional identity value is used so Treasure Data CDP can update the matching Adobe Target profile later.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>System</th>
+              <th>Field name</th>
+              <th>Value source</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>MetaRouter browser SDK</td>
+              <td>`analytics.user().anonymousId()`</td>
+              <td id="identityTableAnonymousId">Waiting</td>
+            </tr>
+            <tr>
+              <td>Adobe Target at.js request</td>
+              <td>`mbox3rdPartyId`</td>
+              <td id="identityTableMboxId">Waiting</td>
+            </tr>
+            <tr>
+              <td>Adobe Target Bulk Profile Update API</td>
+              <td>`thirdPartyId`</td>
+              <td id="identityTableThirdPartyId">Waiting</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Console and Network validation</h2>
+      <p>After accepting the Target OneTrust category, use these checks to confirm that Target loaded, the MetaRouter ID was passed into Target, and the activity response was captured.</p>
+      <div class="step-list">
+        <article class="step-card">
+          <h3>Console checks</h3>
+          <div class="code-sample"><span class="comment">// Adobe Target loaded</span>
+<span class="var">adobe</span>?.<span class="var">target</span>?.<span class="var">VERSION</span>
+
+<span class="comment">// Target params sent before at.js requests</span>
+<span class="var">window</span>.<span class="fn">targetPageParamsAll</span>()
+
+<span class="comment">// MetaRouter source ID and Target identity state</span>
+<span class="var">analytics</span>.<span class="fn">user</span>().<span class="fn">anonymousId</span>()
+<span class="var">window</span>.<span class="var">AdobeTargetIdentity</span>.<span class="fn">getState</span>()
+
+<span class="comment">// Target exposure events captured by this demo</span>
+<span class="var">window</span>.<span class="var">TargetAnalyticsBridge</span>.<span class="fn">getQueue</span>()</div>
+        </article>
+        <article class="step-card">
+          <h3>Network checks</h3>
+          <ol>
+            <li>Open DevTools > Network.</li>
+            <li>Filter by `delivery` or by the Adobe Target host, for example `tt.omtrdc.net`.</li>
+            <li>Open the Target `delivery` request after consent is accepted.</li>
+            <li>Check the request payload for `property.token` and `id.thirdPartyId`.</li>
+            <li>Check the response for `responseTokens`, especially `activity.name` and `experience.name`.</li>
+          </ol>
+          <div class="code-sample"><span class="comment">// Expected request values</span>
+<span class="comment">// Browser input name</span>
+<span class="attr">targetPageParamsAll().mbox3rdPartyId</span>: <span class="str">"SAME_VALUE_AS_analytics.user().anonymousId()"</span>
+
+<span class="comment">// Adobe Target Delivery API request shape</span>
+<span class="attr">property.token</span>: <span class="str">"PROPERTY_TOKEN_FROM_ADOBE_TARGET"</span>
+<span class="attr">id.thirdPartyId</span>: <span class="str">"SAME_VALUE_AS_analytics.user().anonymousId()"</span>
+
+<span class="comment">// Expected response tokens when an activity qualifies</span>
+<span class="attr">activity.name</span>: <span class="str">"Target Activity Name"</span>
+<span class="attr">experience.name</span>: <span class="str">"Target Experience Name"</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Latest MetaTagger events</h2>
+      <pre id="analyticsOutput">[]</pre>
+    </section>
+  </main>
+
+  <script>
+    window.renderTargetDemoStatus = function renderTargetDemoStatus() {
+      var groups = (window.OnetrustActiveGroups || window.OptanonActiveGroups || "").toString();
+      window.TargetDemoState.consentGroups = groups;
+      document.getElementById("consentGroups").textContent = groups || "No groups yet";
+      document.getElementById("targetStatus").textContent = window.TargetDemoState.targetStatus || "Unknown";
+      document.getElementById("targetVersion").textContent = window.adobe && window.adobe.target && window.adobe.target.VERSION ? window.adobe.target.VERSION : "Not loaded";
+      var identityState = window.AdobeTargetIdentity && typeof window.AdobeTargetIdentity.getState === "function" ? window.AdobeTargetIdentity.getState() : {};
+      var thirdPartyId = identityState.thirdPartyId || window.TargetDemoState.targetThirdPartyId || "";
+      document.getElementById("identityStatus").textContent = identityState.status || window.TargetDemoState.identityStatus || "Waiting";
+      document.getElementById("metarouterAnonymousId").textContent = thirdPartyId || "Waiting";
+      document.getElementById("targetThirdPartyId").textContent = thirdPartyId || "Waiting";
+      document.getElementById("identityTableAnonymousId").textContent = thirdPartyId || "Waiting";
+      document.getElementById("identityTableMboxId").textContent = thirdPartyId || "Waiting";
+      document.getElementById("identityTableThirdPartyId").textContent = thirdPartyId || "Waiting";
+      document.getElementById("analyticsCount").textContent = String(window.TargetDemoState.analyticsEvents.length);
+      document.getElementById("analyticsOutput").textContent = JSON.stringify(window.TargetDemoState.analyticsEvents.slice(-5), null, 2);
+    };
+
+    document.getElementById("simulateTargetDecision").addEventListener("click", function () {
+      var simulatedEvent = {
+        detail: {
+          responseTokens: [{
+            "activity.id": "demo-activity-001",
+            "activity.name": "Homepage Hero Message Test",
+            "experience.id": "1",
+            "experience.name": "Experience B"
+          }]
+        }
+      };
+      if (window.TargetAnalyticsBridge) {
+        window.TargetAnalyticsBridge.handleTargetResponse(simulatedEvent);
+      }
+      var zone = document.getElementById("target-hero-message");
+      zone.dataset.variant = "b";
+      zone.querySelector("strong").textContent = "Simulated Target experience";
+      zone.querySelector("span").textContent = "The bridge captured a Target-like decision and sent it to the MetaRouter analytics queue.";
+      window.renderTargetDemoStatus();
+    });
+
+    document.getElementById("openPreferences").addEventListener("click", function () {
+      if (window.OneTrust && typeof window.OneTrust.ToggleInfoDisplay === "function") {
+        window.OneTrust.ToggleInfoDisplay();
+      }
+    });
+
+    window.addEventListener("OneTrustGroupsUpdated", function () {
+      window.renderTargetDemoStatus();
+    });
+
+    window.addEventListener("AdobeTargetIdentityReady", function () {
+      window.renderTargetDemoStatus();
+    });
+
+    window.renderTargetDemoStatus();
+    window.setInterval(window.renderTargetDemoStatus, 1000);
+  </script>
+</body>
+</html>

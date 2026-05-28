@@ -1,0 +1,86 @@
+name: Deploy to SiteGround
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-siteground
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy dist/ to SiteGround
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create .env from GitHub Secrets
+        run: |
+          cat > .env <<'ENVEOF'
+          at_property=${{ secrets.AT_PROPERTY }}
+          metarouter_write_key=${{ secrets.METAROUTER_WRITE_KEY }}
+          metarouter_host=${{ secrets.METAROUTER_HOST }}
+          metarouter_client_name=${{ secrets.METAROUTER_CLIENT_NAME }}
+          metarouter_container_id=${{ secrets.METAROUTER_CONTAINER_ID }}
+          metarouter_gcs_base=${{ secrets.METAROUTER_GCS_BASE }}
+          onetrust_domain_id=${{ secrets.ONETRUST_DOMAIN_ID }}
+          onetrust_target_category_id=${{ secrets.ONETRUST_TARGET_CATEGORY_ID }}
+          target_script_url=${{ secrets.TARGET_SCRIPT_URL }}
+          ENVEOF
+
+      - name: Run build
+        run: |
+          chmod +x scripts/build.sh
+          ./scripts/build.sh
+
+      - name: Verify dist/ output
+        run: |
+          test -f dist/index.html
+          test -f dist/target-demo.html
+          test -f dist/target-config.js
+          test -f dist/at.js
+          ls -la dist/
+
+      - name: Configure SSH (known_hosts + key file)
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SITEGROUND_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p ${{ secrets.SITEGROUND_SSH_PORT }} -H ${{ secrets.SITEGROUND_SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Start ssh-agent and load key with passphrase
+        env:
+          SSH_PASSPHRASE: ${{ secrets.SITEGROUND_SSH_PASSPHRASE }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq expect
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
+          /usr/bin/expect <<EOF
+          spawn ssh-add /home/runner/.ssh/id_ed25519
+          expect "Enter passphrase"
+          send "$SSH_PASSPHRASE\r"
+          expect eof
+          EOF
+          ssh-add -l
+
+      - name: Deploy dist/ via rsync over SSH
+        run: |
+          rsync -avz --delete \
+            -e "ssh -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes" \
+            dist/ \
+            ${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:${{ secrets.SITEGROUND_REMOTE_PATH }}/
+
+      - name: Cleanup SSH key and agent
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_ed25519
+          if [ -n "${SSH_AGENT_PID:-}" ]; then kill "$SSH_AGENT_PID" || true; fi

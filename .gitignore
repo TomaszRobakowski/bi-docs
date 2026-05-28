@@ -1,0 +1,9 @@
+.env
+dist/
+target-config.js
+at.js
+research/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

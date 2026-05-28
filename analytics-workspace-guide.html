@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Adobe Analytics Workspace Guide for Target Metadata</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        background: "#f8fbff",
+        primaryColor: "#ffffff",
+        primaryTextColor: "#172033",
+        primaryBorderColor: "#0f5d73",
+        lineColor: "#31546b",
+        secondaryColor: "#e8f2f7",
+        tertiaryColor: "#fff7ed",
+        fontSize: "11px"
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: false,
+        nodeSpacing: 12,
+        rankSpacing: 14
+      }
+    });
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="mark">AA</span>
+        <div>
+          <p class="brand-title">Workspace Guide</p>
+          <p class="brand-subtitle">Target response tokens as eVars</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Project pages">
+        <a href="./index.html">Guide</a>
+        <a href="./target-demo.html">Working Demo</a>
+        <a href="./analytics-workspace-guide.html">Workspace Guide</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Reporting guide</p>
+      <h1>Recreating Target analysis in Adobe Analytics Workspace without native A4T</h1>
+      <p class="lead">When MetaRouter owns analytics delivery, Target exposure should be sent as a small, agreed Adobe Analytics payload: Activity Name, Experience Name, and one exposure counter event.</p>
+    </section>
+
+    <section class="card">
+      <h2>Implementation files</h2>
+      <p>This is example code. It can be modified freely for the client's implementation needs; it only demonstrates the recommended method, script responsibility, and loading order.</p>
+      <div class="resource-list">
+        <a href="./scripts/target-consent-wrapper.js">Consent wrapper</a>
+        <a href="./scripts/metarouter-loader.js">MetaRouter loader</a>
+        <a href="./scripts/adobe-target-identity.js">Target identity resolver</a>
+        <a href="./scripts/metarouter-target-bridge.js">Target analytics bridge</a>
+        <a href="./scripts/adobe-target-flicker-handler.js">Flicker handler</a>
+        <a href="./scripts/adobe-target-injection.js">Target injection script</a>
+        <a href="./at.js">Example at.js</a>
+        <a href="./target-demo.html">Working demo page</a>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>CDP identity stitching for Target profile updates</h2>
+      <p>The Target exposure reporting payload does not change. MetaTagger still sends only `experience_name`, `experience_type`, and `event222`. The identity stitching layer is separate: it lets Treasure Data CDP update Adobe Target profiles for the same visitor later.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>System</th>
+              <th>Field</th>
+              <th>Required behavior</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>MetaRouter</td>
+              <td>`analytics.user().anonymousId()`</td>
+              <td>Expose a stable anonymous visitor ID in the browser and forward it to Treasure Data CDP.</td>
+            </tr>
+            <tr>
+              <td>Adobe Target at.js</td>
+              <td>`mbox3rdPartyId`</td>
+              <td>Receive the same MetaRouter anonymous ID through `targetPageParamsAll()` before the first Target request.</td>
+            </tr>
+            <tr>
+              <td>Treasure Data CDP / Adobe Target API</td>
+              <td>`thirdPartyId`</td>
+              <td>Use the same ID as the first CSV column when updating Target profiles through the Bulk Profile Update API v2.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-sample"><span class="comment">// Event or profile field MetaRouter should make available to CDP</span>
+{
+  <span class="attr">"metarouter_anonymous_id"</span>: <span class="str">"2374724e-5b40-499a-999c-d2b2b66c0040"</span>,
+  <span class="attr">"target_third_party_id"</span>: <span class="str">"2374724e-5b40-499a-999c-d2b2b66c0040"</span>
+}</div>
+      <div class="code-sample"><span class="comment"># Adobe Target Bulk Profile Update API v2 CSV</span>
+batch=thirdPartyId,profile.segment,profile.customer_tier,profile.cdp_audience
+2374724e-5b40-499a-999c-d2b2b66c0040,high_intent,gold,target_test_audience
+9e3e6c1f-2a7f-4a94-a8e6-8c9a6e17d111,returning_user,silver,target_test_audience</div>
+      <div class="code-sample"><span class="comment"># Postman request example</span>
+POST https://bi.tt.omtrdc.net/m2/bi/v2/profile/batchUpdate
+Content-Type: text/plain
+
+batch=thirdPartyId,profile.segment,profile.customer_tier,profile.cdp_audience
+2374724e-5b40-499a-999c-d2b2b66c0040,high_intent,gold,target_test_audience</div>
+      <p class="muted">In the browser the Adobe Target field is named `mbox3rdPartyId`. In the bulk profile update file and API it is named `thirdPartyId`. Both must contain the same MetaRouter anonymous ID.</p>
+    </section>
+
+    <section class="card band">
+      <h2>Final Adobe Analytics mapping</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>MetaTagger property</th>
+              <th>Target source</th>
+              <th>Meaning</th>
+              <th>Expiration</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>`experience_type`</td>
+              <td>`activity.name`, fallback to `activity.id` if name is missing</td>
+              <td>Target Activity Name</td>
+              <td>Visit or Activity</td>
+            </tr>
+            <tr>
+              <td>`experience_name`</td>
+              <td>`experience.name`</td>
+              <td>Target Experience Name</td>
+              <td>Visit or Activity</td>
+            </tr>
+            <tr>
+              <td>`event222`</td>
+              <td>Target decision/render counter</td>
+              <td>Adobe Target Exposure Counter</td>
+              <td>Counter event</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">This is the final agreed MetaTagger payload for Adobe Target: only `experience_name`, `experience_type`, and `event222` are sent by the bridge. MetaRouter can map these readable properties to the chosen Adobe Analytics eVars and event. Additional experience IDs, offer IDs, and offer names are intentionally not sent in this implementation.</p>
+      <p class="muted">Experience Name is read from `experience.name`, with fallback to `experience.id` if the name is missing. If `activity.name` is missing, `experience_type` falls back to `activity.id`.</p>
+    </section>
+
+    <section class="grid two band">
+      <article class="card">
+        <h2>Admin setup</h2>
+        <ol>
+          <li>Open Adobe Analytics Admin.</li>
+          <li>Select the report suite used by MetaRouter.</li>
+          <li>Go to Conversion Variables.</li>
+          <li>Create or rename `experience_type` as Target Activity Name.</li>
+          <li>Create or rename `experience_name` as Target Experience Name.</li>
+          <li>Create or reserve `event222` as the Adobe Target exposure counter.</li>
+          <li>Use Text String type.</li>
+          <li>Set allocation according to reporting needs; last touch is a practical default.</li>
+          <li>Set expiration to Visit for visit-level attribution or Activity for longer conversion windows.</li>
+        </ol>
+      </article>
+      <article class="card">
+        <h2>Workspace setup</h2>
+        <ol>
+          <li>Create a Freeform Table.</li>
+          <li>Use Target Activity Name as the first dimension.</li>
+          <li>Break down by Target Experience Name.</li>
+          <li>Add metrics such as Visits, Page Views, Orders, Leads, or custom conversion events.</li>
+          <li>Create a segment where `event222` exists or `experience_type` exists to isolate exposed users.</li>
+          <li>Compare exposed audiences using calculated metrics such as conversion rate or revenue per visit.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="card band">
+      <h2>Reporting flow</h2>
+      <div class="flow-box compact">
+        <pre class="mermaid">
+flowchart TD
+  A[Target response token] --> B[MetaRouter bridge payload]
+  B --> C[MetaRouter mapping]
+  C --> D[experience_name + experience_type + event222]
+  D --> E[MetaRouter / Adobe Analytics mapping]
+  E --> F[Analysis Workspace table]
+  F --> G[Activity exposure and conversion performance]
+        </pre>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Step by step instructions</h2>
+      <div class="step-list">
+        <article class="step-card">
+          <h3>Create Analytics dimensions</h3>
+          <p>Use readable MetaTagger properties on the page, then map them to the final reserved Analytics variables in MetaRouter or Adobe Analytics processing.</p>
+          <p class="muted">Related file to review: <a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a>.</p>
+          <div class="code-sample"><span class="comment"># Example naming convention</span>
+<span class="var">experience_type</span> = <span class="str">Target Activity Name</span>
+<span class="var">experience_name</span> = <span class="str">Target Experience Name</span>
+<span class="var">event222</span> = <span class="str">Adobe Target Exposure Counter</span></div>
+        </article>
+        <article class="step-card">
+          <h3>Map MetaRouter properties to Adobe variables</h3>
+          <p>The bridge emits only the final readable MetaTagger properties. MetaRouter should map these properties into the Adobe Analytics hit without adding extra Target metadata.</p>
+          <p class="muted">Copy or adapt from: <a href="./scripts/metarouter-loader.js">metarouter-loader.js</a> and <a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a>.</p>
+          <div class="code-sample"><span class="comment">// MetaTagger / MetaRouter mapping example</span>
+<span class="var">experience_type</span> -> <span class="str">Target Activity Name</span> -> <span class="str">Adobe Analytics eVar</span>
+<span class="var">experience_name</span> -> <span class="str">Target Experience Name</span> -> <span class="str">Adobe Analytics eVar</span>
+<span class="var">event222</span>        -> <span class="str">1</span> -> <span class="str">Adobe Analytics event222</span></div>
+        </article>
+        <article class="step-card">
+          <h3>Validate required response tokens</h3>
+          <p>The bridge sends the MetaTagger event only when the required Activity Name and Experience Name values are present. Activity Name can fall back to Activity ID; Experience Name can fall back to Experience ID.</p>
+          <p class="muted">Enable `activity.name`, `activity.id`, `experience.name`, and `experience.id` response tokens in Adobe Target Administration.</p>
+          <div class="code-sample"><span class="comment">// Required Target response token values</span>
+<span class="var">experience_type</span> = <span class="str">token["activity.name"] || token["activity.id"]</span>
+<span class="var">experience_name</span> = <span class="str">token["experience.name"] || token["experience.id"]</span>
+<span class="var">event222</span> = <span class="str">1</span></div>
+        </article>
+        <article class="step-card">
+          <h3>Build Workspace tables</h3>
+          <p>Use activity name first, break it down by experience name when useful, then add exposure and conversion metrics.</p>
+          <p class="muted">Use <a href="./target-demo.html">target-demo.html</a> to validate the event before building Workspace reports.</p>
+          <div class="code-sample"><span class="comment">Workspace freeform table</span>
+Rows:    <span class="str">Target Activity Name</span>
+Breakdown: <span class="str">Target Experience Name</span>
+Metrics: <span class="str">event222, Visits, Orders, Leads, Conversion Rate</span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>MetaRouter event shape</h2>
+      <p>The page bridge sends a normal analytics event through `metaTagger.track()`. The payload is intentionally limited to the final readable MetaTagger properties. The bridge also deduplicates identical Target tokens from the same Target response so the exposure counter is not inflated. The implementation lives in <a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a>.</p>
+      <pre><code>{
+  "event": "Adobe Target Decision",
+  "experience_name": "Experience B",
+  "experience_type": "Country Allocation C&F",
+  "event222": 1
+}</code></pre>
+    </section>
+
+    <section class="card band">
+      <h2>Audience and impact analysis</h2>
+      <p>Use Target exposure metadata to create audiences for each activity, then compare those audiences against the business events that matter. The agreed payload supports activity and experience-level exposure reporting using the agreed two eVars.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Audience</th>
+              <th>Segment definition</th>
+              <th>Example goal metrics</th>
+              <th>Impact view</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>All Target-exposed users</td>
+              <td>`event222` exists, or `experience_type` exists.</td>
+              <td>Visits, Unique Visitors, Form Submit event, Download event.</td>
+              <td>Use this as the denominator for exposure quality and total Target reach.</td>
+            </tr>
+            <tr>
+              <td>Specific activity exposed</td>
+              <td>`experience_type` equals the tested activity name.</td>
+              <td>Form Submit event, Lead event, Asset Download event.</td>
+              <td>Conversion rate for users exposed to that activity.</td>
+            </tr>
+            <tr>
+              <td>Specific experience exposed</td>
+              <td>`experience_name` equals the Target experience name, for example `Experience A`, `Experience B`, or the delivered experience ID.</td>
+              <td>Same goal metrics as the activity audience.</td>
+              <td>Compare performance by Target experience name.</td>
+            </tr>
+            <tr>
+              <td>Non-exposed comparison</td>
+              <td>Exclude hits or visits where `event222` exists.</td>
+              <td>Same goal metrics as exposed users.</td>
+              <td>Use carefully as directional context, not as randomized-control proof.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-sample"><span class="comment">Workspace calculated metrics</span>
+Form submit rate = <span class="str">Form Submit event / Visitors with event222</span>
+Download rate = <span class="str">Download event / Visitors with event222</span>
+Activity conversion rate = <span class="str">Goal event / Visitors where experience_type equals the activity name</span>
+Directional lift = <span class="str">(Exposed conversion rate - non-exposed conversion rate) / non-exposed conversion rate</span></div>
+      <p class="muted">Build one panel per activity, then use rows for `experience_type` and columns for event222, exposed visitors, goal events, and conversion rate. Keep the same attribution window across exposed and comparison audiences.</p>
+    </section>
+
+    <section class="card band">
+      <h2>Validation checklist</h2>
+      <ul>
+        <li>Open the exact implementation files from this guide and adjust them to the client's final script paths, category IDs, and Analytics variables.</li>
+        <li>Response tokens are enabled in Adobe Target Administration.</li>
+        <li>The browser fires `adobe.target.event.REQUEST_SUCCEEDED` after Target returns a decision.</li>
+        <li>The bridge queues at least one `Adobe Target Decision` event.</li>
+        <li>MetaTagger receives the `metaTagger.track()` call and MetaRouter forwards the properties.</li>
+        <li>Adobe Analytics image/request payload contains `experience_name`, `experience_type`, and `event222` only for Target exposure reporting.</li>
+        <li>Workspace shows Target Activity Name, Target Experience Name, and event222 with the chosen success metrics.</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

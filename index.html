@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Adobe Target Evaluation with OneTrust and MetaRouter</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        background: "#f8fbff",
+        primaryColor: "#ffffff",
+        primaryTextColor: "#172033",
+        primaryBorderColor: "#0f5d73",
+        lineColor: "#31546b",
+        secondaryColor: "#e8f2f7",
+        tertiaryColor: "#fff7ed",
+        actorBkg: "#ffffff",
+        actorBorder: "#0f5d73",
+        actorTextColor: "#172033",
+        signalColor: "#31546b",
+        signalTextColor: "#172033",
+        labelBoxBkgColor: "#e8f2f7",
+        labelTextColor: "#172033",
+        noteBkgColor: "#fff7ed",
+        noteTextColor: "#172033"
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        nodeSpacing: 24,
+        rankSpacing: 28
+      },
+      sequence: {
+        useMaxWidth: true,
+        mirrorActors: true,
+        actorMargin: 32,
+        messageMargin: 24
+      }
+    });
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="mark">AT</span>
+        <div>
+          <p class="brand-title">Target OT Test</p>
+          <p class="brand-subtitle">Adobe Target, OneTrust, MetaRouter</p>
+        </div>
+      </div>
+      <nav class="nav" aria-label="Project pages">
+        <a href="./index.html">Guide</a>
+        <a href="./target-demo.html">Working Demo</a>
+        <a href="./analytics-workspace-guide.html">Workspace Guide</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Implementation guide</p>
+      <h1>Evaluating Adobe Target when OneTrust controls consent and MetaRouter sends analytics</h1>
+      <p class="lead">This guide explains how to run Adobe Target only after consent, prevent flicker, and forward the agreed Adobe Analytics payload through MetaRouter: `experience_name`, `experience_type`, and `event222`.</p>
+      <div class="target-zone" id="target-hero-message" data-variant="a">
+        <strong>Default experience</strong>
+        <span>This top element is intentionally stable and easy to target. Adobe Target should modify this block when an activity qualifies.</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>How to use this package</h2>
+      <p>This is example code. It can be modified freely for the client's implementation needs; it only demonstrates the recommended method, script responsibility, and loading order.</p>
+      <div class="resource-list">
+        <a href="./target-demo.html">Working demo page</a>
+        <a href="./scripts/target-consent-wrapper.js">Consent wrapper</a>
+        <a href="./scripts/metarouter-loader.js">MetaRouter loader</a>
+        <a href="./scripts/adobe-target-identity.js">Target identity resolver</a>
+        <a href="./scripts/metarouter-target-bridge.js">Target analytics bridge</a>
+        <a href="./scripts/adobe-target-flicker-handler.js">Flicker handler</a>
+        <a href="./scripts/adobe-target-injection.js">Target injection script</a>
+        <a href="./analytics-workspace-guide.html">Workspace guide</a>
+      </div>
+    </section>
+
+    <section class="grid band">
+      <article class="card">
+        <h2>Why this setup is different</h2>
+        <p>The client uses MetaRouter as a server-side routing layer for analytics. Because analytics collection is not the standard browser-side Adobe Analytics setup, the native A4T reporting path is not the right dependency for this proof.</p>
+        <p>The alternative is to collect Target decision metadata on the page and send it through MetaRouter as normal analytics fields.</p>
+      </article>
+      <article class="card">
+        <h2>What we collect</h2>
+        <p>The bridge listens to the Target response event and reads only the agreed reporting fields: activity name and experience name. It sends `experience_name`, `experience_type`, and `event222` to MetaRouter. If `activity.name` is missing, `experience_type` falls back to `activity.id`; if `experience.name` is missing, `experience_name` falls back to `experience.id`.</p>
+        <p>Target response tokens must be enabled in Adobe Target Administration.</p>
+      </article>
+      <article class="card">
+        <h2>What developers implement</h2>
+        <p>Developers add `targetPageParamsAll()`, the flicker handler, OneTrust, the consent wrapper, the MetaRouter identity resolver, the Target injection script, the Target analytics bridge, and the local or hosted `at.js` file.</p>
+      </article>
+    </section>
+
+    <section class="card band">
+      <h2>Recommended sequence</h2>
+      <p>This is the short version developers should remember. The files in this package are intentionally more defensive because they handle timing, retries, diagnostics, and consent changes. The core implementation principles are much simpler.</p>
+      <div class="step-list">
+        <article class="step-card">
+          <h3>Set Target params before `at.js` runs</h3>
+          <p>Adobe Target must know the property token and, for CDP profile stitching, the visitor ID before the first Target request is made.</p>
+          <div class="code-sample"><span class="comment">// Principle: keep Target params available before loading at.js</span>
+<span class="var">window</span>.<span class="var">targetPageParamsAll</span> = <span class="kw">function</span>() {
+  <span class="kw">return</span> {
+    <span class="attr">at_property</span>: <span class="str">"PROPERTY_TOKEN_FROM_ADOBE_TARGET"</span>,
+    <span class="attr">mbox3rdPartyId</span>: <span class="str">"METAROUTER_ANONYMOUS_ID"</span>
+  };
+};</div>
+          <p class="muted">Our implementation: <a href="./scripts/adobe-target-injection.js">adobe-target-injection.js</a> builds this object and keeps the older page-specific params together with it.</p>
+        </article>
+
+        <article class="step-card">
+          <h3>Hide only the area Target can change</h3>
+          <p>Use a short pre-hiding timeout to avoid flicker while Target evaluates. Prefer hiding the specific hero or module, not the whole page.</p>
+          <div class="code-sample"><span class="comment">// Principle: hide the controlled area, then always reveal it again</span>
+<span class="fn">hide</span>(<span class="str">"#target-hero-message"</span>);
+<span class="fn">loadTarget</span>();
+<span class="fn">show</span>(<span class="str">"#target-hero-message"</span>);
+<span class="fn">setTimeout</span>(() => <span class="fn">show</span>(<span class="str">"#target-hero-message"</span>), <span class="str">3000</span>);</div>
+          <p class="muted">Our implementation: <a href="./scripts/adobe-target-flicker-handler.js">adobe-target-flicker-handler.js</a> handles prior consent, timeout, and failure states.</p>
+        </article>
+
+        <article class="step-card">
+          <h3>Let OneTrust decide whether Target can load</h3>
+          <p>Do not include `at.js` directly in the page. Load it only after the agreed OneTrust category is active.</p>
+          <div class="code-sample"><span class="comment">// Principle: consent first, script injection second</span>
+<span class="kw">if</span> (<span class="fn">hasConsent</span>(<span class="var">TargetProjectConfig</span>.<span class="var">targetCategoryId</span>)) {
+  <span class="fn">loadScript</span>(<span class="str">"./at.js"</span>);
+}</div>
+          <p class="muted">Our implementation: <a href="./scripts/target-consent-wrapper.js">target-consent-wrapper.js</a> supports initial consent, consent changes, and script removal after revocation.</p>
+        </article>
+
+        <article class="step-card">
+          <h3>Use MetaRouter anonymous ID for Target profile stitching</h3>
+          <p>The same ID has two names depending on where it is used: browser-side Target uses `mbox3rdPartyId`; Adobe Target profile update files use `thirdPartyId`.</p>
+          <div class="code-sample"><span class="comment">// Principle: same value, different field names</span>
+<span class="kw">const</span> <span class="var">id</span> = <span class="var">analytics</span>.<span class="fn">user</span>().<span class="fn">anonymousId</span>();
+
+<span class="comment">// Browser Target request</span>
+<span class="var">params</span>.<span class="var">mbox3rdPartyId</span> = <span class="var">id</span>;
+
+<span class="comment">// CDP / Bulk Profile Update CSV</span>
+<span class="var">thirdPartyId</span> = <span class="var">id</span>;</div>
+          <p class="muted">Our implementation: <a href="./scripts/adobe-target-identity.js">adobe-target-identity.js</a> waits for `analytics.user().anonymousId()` and blocks Target loading briefly if the ID is not ready.</p>
+        </article>
+
+        <article class="step-card">
+          <h3>Send Target exposure separately from identity</h3>
+          <p>Identity stitching is not the reporting event. Reporting still uses only the agreed Target exposure payload.</p>
+          <div class="code-sample"><span class="comment">// Principle: readable exposure event for MetaRouter / Adobe Analytics</span>
+<span class="fn">metaTagger.track</span>(<span class="str">"Adobe Target Decision"</span>, {
+  <span class="attr">experience_name</span>: <span class="str">"Experience B"</span>,
+  <span class="attr">experience_type</span>: <span class="str">"Country Allocation C&amp;F"</span>,
+  <span class="attr">event222</span>: <span class="str">1</span>
+});</div>
+          <p class="muted">Our implementation: <a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a> reads Target response tokens and sends only these three reporting fields.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid two band">
+      <article class="card">
+        <h2>Files in this package</h2>
+        <ul>
+          <li><a href="./target-demo.html">target-demo.html</a> - working test page with a Target-controlled element.</li>
+          <li><a href="./analytics-workspace-guide.html">analytics-workspace-guide.html</a> - reporting and eVar setup guide.</li>
+          <li><a href="./scripts/onetrust-loader.js">onetrust-loader.js</a> - loads OneTrust from generated config.</li>
+          <li><a href="./scripts/adobe-target-flicker-handler.js">adobe-target-flicker-handler.js</a> - generic anti-flicker handler.</li>
+          <li><a href="./scripts/target-consent-wrapper.js">target-consent-wrapper.js</a> - universal consent loader.</li>
+          <li><a href="./scripts/adobe-target-identity.js">adobe-target-identity.js</a> - MetaRouter anonymous ID resolver for Target profile stitching.</li>
+          <li><a href="./scripts/adobe-target-injection.js">adobe-target-injection.js</a> - Adobe Target loader.</li>
+          <li><a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a> - response token analytics bridge.</li>
+          <li><a href="./at.js">at.js</a> - archived Adobe Target library regenerated with the project `.env` property token.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Configuration</h2>
+        <ul>
+          <li>Environment-specific values live in `.env` and are baked into `dist/target-config.js` by `./scripts/build.sh`.</li>
+          <li>Deploy the full `dist/` folder to a registered test or staging domain. OneTrust, Target, and MetaRouter do not fully work on localhost.</li>
+          <li>`at.js` is generated from `assets/at.js.template` during the build without the legacy inline `targetPageParams()` block.</li>
+          <li>MetaRouter receives Target exposure events through the dedicated `metaTagger.track()` method.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card band">
+      <h2>IT implementation checklist</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Instruction</th>
+              <th>Important note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Property token</td>
+              <td>Fetch the property token from Adobe Target Administration > Properties, or request it from an Adobe Target administrator.</td>
+              <td>The token must be passed through `targetPageParamsAll()` before `at.js` executes.</td>
+            </tr>
+            <tr>
+              <td>at.js library</td>
+              <td>Download `at.js` from Adobe Target Administration > Implementation and host it on the client server or CDN.</td>
+              <td>The hosted `at.js` should be a clean library file. Do not keep a hardcoded inline `targetPageParams()` block inside `at.js`.</td>
+            </tr>
+            <tr>
+              <td>Head sequence</td>
+              <td>Load `target-config.js` and the flicker handler first, then `onetrust-loader.js`, the consent wrapper, MetaRouter loader, Target identity resolver, Target bridge, and Target injector.</td>
+              <td>This order prevents direct Target loading before consent and reduces flicker on already-consented visits.</td>
+            </tr>
+            <tr>
+              <td>Identity stitching</td>
+              <td>Use MetaRouter `analytics.user().anonymousId()` as the shared identifier. Send it to Adobe Target as `mbox3rdPartyId`; use the same value as `thirdPartyId` in Target profile update files.</td>
+              <td>This is separate from the `metaTagger.track()` exposure payload and does not change `experience_name`, `experience_type`, or `event222`.</td>
+            </tr>
+            <tr>
+              <td>Consent category</td>
+              <td>Set the Target OneTrust category in `.env` as `onetrust_target_category_id`, then mirror it in `AdobeTargetConsentConfig.categoryId` and `AdobeTargetFlickerConfig.categoryId`.</td>
+              <td>The demo reads the category from generated `target-config.js`; the client category must match the approved OneTrust classification.</td>
+            </tr>
+            <tr>
+              <td>Flicker handling</td>
+              <td>Configure the flicker handler selector to the smallest Target-controlled area possible, for example `#target-hero-message`.</td>
+              <td>Use full-body hiding only when the whole first viewport can be personalized. The timeout fallback should stay short, typically 3000 ms.</td>
+            </tr>
+            <tr>
+              <td>MetaRouter payload</td>
+              <td>Forward only `experience_name`, `experience_type`, and `event222` through `metaTagger.track()`.</td>
+              <td>`experience_type` is Activity Name, `experience_name` is Experience Name, and `event222` is the Target exposure counter.</td>
+            </tr>
+            <tr>
+              <td>A4T limitation</td>
+              <td>Do not rely on native A4T for this setup when MetaRouter owns analytics delivery and consent categories can differ.</td>
+              <td>If Target is allowed but Analytics is not, the experience can render while native A4T reporting does not receive the Analytics hit.</td>
+            </tr>
+            <tr>
+              <td>Validation</td>
+              <td>Check `adobe.target.VERSION`, the Target delivery request, response tokens, the `metaTagger.track()` call, and the final Adobe Analytics payload.</td>
+              <td>Response tokens must be enabled in Adobe Target Administration for the bridge to populate `experience_type` and `experience_name`. `experience_type` can fall back from `activity.name` to `activity.id`; `experience_name` can fall back from `experience.name` to `experience.id`.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Data flow diagram</h2>
+      <p class="muted">This is the mental model developers should keep: consent gates Target, MetaRouter provides the shared anonymous ID, the flicker handler protects the Target area, Target returns decision metadata, MetaRouter forwards the final AA payload, and Workspace reports on exposure.</p>
+      <div class="flow-box">
+        <pre class="mermaid">
+flowchart TD
+  A[User opens page] --> B[OneTrust loads consent state]
+  A --> C[MetaRouter loads analytics.user anonymousId]
+  A --> D[Flicker handler can hide Target area]
+  B --> E{Target consent granted?}
+  E -- No --> F[Do not load at.js]
+  E -- Yes --> G[Wait for MetaRouter anonymous ID]
+  C --> G
+  G --> H[Set mbox3rdPartyId in targetPageParamsAll]
+  H --> I[Consent wrapper injects at.js]
+  I --> J[Adobe Target evaluates the page]
+  J --> K[Target response tokens]
+  K --> L[MetaRouter bridge builds experience_name experience_type event222]
+  L --> M[metaTagger.track event]
+  M --> N[Adobe Analytics hit through MetaRouter]
+  N --> O[Workspace reports exposure and goals]
+        </pre>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Target identity stitching for CDP profile updates</h2>
+      <p>This identity flow is independent from the exposure reporting payload. The exposure payload remains `experience_name`, `experience_type`, and `event222`. The identity flow gives Treasure Data CDP a stable identifier it can use later to update the matching Adobe Target profile.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Place</th>
+              <th>Field name</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>MetaRouter browser SDK</td>
+              <td>`analytics.user().anonymousId()`</td>
+              <td>The source identity for stitching.</td>
+            </tr>
+            <tr>
+              <td>Adobe Target at.js</td>
+              <td>`mbox3rdPartyId`</td>
+              <td>The same MetaRouter anonymous ID, sent before `at.js` makes the first Target request.</td>
+            </tr>
+            <tr>
+              <td>Adobe Target Bulk Profile Update API</td>
+              <td>`thirdPartyId`</td>
+              <td>The same ID in CDP-generated batch files.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code-sample"><span class="comment">// Browser-side Target params</span>
+<span class="var">window</span>.<span class="var">targetPageParamsAll</span> = <span class="kw">function</span>() {
+  <span class="kw">return</span> {
+    <span class="attr">at_property</span>: <span class="str">"PROPERTY_TOKEN"</span>,
+    <span class="attr">mbox3rdPartyId</span>: <span class="var">window</span>.<span class="var">AdobeTargetIdentity</span>.<span class="var">thirdPartyId</span>,
+    <span class="attr">PageCheck</span>: <span class="str">"target-demo"</span>
+  };
+};</div>
+    </section>
+
+    <section class="card band">
+      <h2>Console validation</h2>
+      <p>Use these checks after accepting the OneTrust category used for Target. They verify the implementation principles without requiring developers to understand every helper function.</p>
+      <div class="step-list">
+        <article class="step-card">
+          <h3>Check whether Target loaded</h3>
+          <div class="code-sample"><span class="comment">// Should return an at.js version, for example "2.11.8"</span>
+<span class="var">adobe</span>?.<span class="var">target</span>?.<span class="var">VERSION</span></div>
+        </article>
+        <article class="step-card">
+          <h3>Check the property token and third-party ID before the request</h3>
+          <div class="code-sample"><span class="comment">// Should contain at_property and mbox3rdPartyId</span>
+<span class="var">window</span>.<span class="fn">targetPageParamsAll</span>()
+
+<span class="comment">// Direct identity check</span>
+<span class="var">window</span>.<span class="var">AdobeTargetIdentity</span>.<span class="fn">getState</span>()</div>
+        </article>
+        <article class="step-card">
+          <h3>Check the MetaRouter source identity</h3>
+          <div class="code-sample"><span class="comment">// This value should equal targetPageParamsAll().mbox3rdPartyId</span>
+<span class="var">analytics</span>.<span class="fn">user</span>().<span class="fn">anonymousId</span>()</div>
+        </article>
+        <article class="step-card">
+          <h3>Check whether an activity was reported</h3>
+          <div class="code-sample"><span class="comment">// Demo helper: last events sent by the Target bridge</span>
+<span class="var">window</span>.<span class="var">TargetAnalyticsBridge</span>.<span class="fn">getQueue</span>()
+
+<span class="comment">// Network tab: filter for the Target delivery request</span>
+<span class="str">delivery</span></div>
+        </article>
+      </div>
+      <p class="muted">In DevTools Network, open the Adobe Target `delivery` request. The browser-side input name is `mbox3rdPartyId`, but at.js sends it to the Delivery API as `id.thirdPartyId`. The property token appears as `property.token`. The response should include response tokens such as `activity.name` and `experience.name` when the activity qualifies and response tokens are enabled in Adobe Target.</p>
+    </section>
+
+    <section class="card band">
+      <h2>Step by step instructions: copy in this order</h2>
+      <div class="step-list">
+        <article class="step-card">
+          <h3>Define Target page parameters and flicker handling</h3>
+          <p>The property token must be available before `at.js` runs. The flicker handler should be configured before OneTrust and the conditional Target loader.</p>
+          <p class="muted">Copy or adapt: <a href="./scripts/adobe-target-flicker-handler.js">adobe-target-flicker-handler.js</a> and <a href="./scripts/adobe-target-injection.js">adobe-target-injection.js</a>.</p>
+          <div class="code-sample"><span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./target-config.js"</span><span class="tag">&gt;&lt;/script&gt;</span>
+<span class="tag">&lt;script&gt;</span>
+  <span class="var">window</span>.<span class="var">AdobeTargetConsentConfig</span> = {
+    <span class="attr">categoryId</span>: <span class="var">window</span>.<span class="var">TargetProjectConfig</span>.<span class="var">targetCategoryId</span>,
+    <span class="attr">targetSrc</span>: <span class="var">window</span>.<span class="var">TargetProjectConfig</span>.<span class="var">targetScriptUrl</span>,
+    <span class="attr">propertyToken</span>: <span class="var">window</span>.<span class="var">TargetProjectConfig</span>.<span class="var">atProperty</span>,
+    <span class="attr">pageCheck</span>: <span class="str">"target-demo"</span>
+  };
+  <span class="var">window</span>.<span class="var">AdobeTargetFlickerConfig</span> = {
+    <span class="attr">categoryId</span>: <span class="var">window</span>.<span class="var">TargetProjectConfig</span>.<span class="var">targetCategoryId</span>,
+    <span class="attr">selector</span>: <span class="str">"#target-hero-message"</span>,
+    <span class="attr">timeout</span>: <span class="str">3000</span>
+  };
+<span class="tag">&lt;/script&gt;</span>
+<span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/adobe-target-flicker-handler.js"</span><span class="tag">&gt;&lt;/script&gt;</span></div>
+        </article>
+
+        <article class="step-card">
+          <h3>Add OneTrust</h3>
+          <p>OneTrust must know the current consent state before Adobe Target is injected. The demo loads it from `TargetProjectConfig.oneTrustDomainId`.</p>
+          <div class="code-sample"><span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/onetrust-loader.js"</span><span class="tag">&gt;&lt;/script&gt;</span></div>
+        </article>
+
+        <article class="step-card">
+          <h3>Load the reusable consent wrapper</h3>
+          <p>This wrapper is generic. It can load Target or any other external script after a specific OneTrust category is active.</p>
+          <p class="muted">Copy or adapt: <a href="./scripts/target-consent-wrapper.js">target-consent-wrapper.js</a>.</p>
+          <div class="code-sample"><span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/target-consent-wrapper.js"</span><span class="tag">&gt;&lt;/script&gt;</span></div>
+        </article>
+
+        <article class="step-card">
+          <h3>Load the MetaRouter test implementation</h3>
+          <p>This loader reads `MetaRouterTestConfig` from generated `target-config.js` and loads the configured analytics and tagging libraries.</p>
+          <p class="muted">Copy or adapt: <a href="./scripts/metarouter-loader.js">metarouter-loader.js</a>.</p>
+          <div class="code-sample"><span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/metarouter-loader.js"</span><span class="tag">&gt;&lt;/script&gt;</span>
+<span class="comment">// Uses MetaRouterTestConfig.analyticsUrl and MetaRouterTestConfig.taggingUrl</span></div>
+        </article>
+
+        <article class="step-card">
+          <h3>Resolve Target identity, then attach the bridge and Target injector</h3>
+          <p>The identity resolver waits for MetaRouter `analytics.user().anonymousId()`. The injector defines `targetPageParamsAll()` and loads `at.js` only when consent and identity are ready.</p>
+          <p class="muted">Copy or adapt: <a href="./scripts/adobe-target-identity.js">adobe-target-identity.js</a>, <a href="./scripts/metarouter-target-bridge.js">metarouter-target-bridge.js</a>, and <a href="./scripts/adobe-target-injection.js">adobe-target-injection.js</a>.</p>
+          <div class="code-sample"><span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/adobe-target-identity.js"</span><span class="tag">&gt;&lt;/script&gt;</span>
+<span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/metarouter-target-bridge.js"</span><span class="tag">&gt;&lt;/script&gt;</span>
+<span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="str">"./scripts/adobe-target-injection.js"</span><span class="tag">&gt;&lt;/script&gt;</span></div>
+        </article>
+
+        <article class="step-card">
+          <h3>Send the final event through MetaTagger</h3>
+          <p>MetaTagger receives only the three agreed readable properties for Adobe Target reporting.</p>
+          <div class="code-sample"><span class="fn">metaTagger.track</span>(<span class="str">"Adobe Target Decision"</span>, {
+  <span class="attr">experience_name</span>: <span class="str">"Experience B"</span>,
+  <span class="attr">experience_type</span>: <span class="str">"Country Allocation C&amp;F"</span>,
+  <span class="attr">event222</span>: <span class="str">1</span>
+});</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="card band">
+      <h2>Implementation sequence diagram</h2>
+      <div class="flow-box">
+        <pre class="mermaid">
+sequenceDiagram
+  participant Page
+  participant OT as OneTrust
+  participant ID as MetaRouter Identity
+  participant Wrapper as Consent Wrapper
+  participant Target as Adobe Target at.js
+  participant Bridge as MetaRouter Bridge
+  participant MR as MetaRouter
+  participant AA as Adobe Analytics
+
+  Page->>OT: Load CMP scripts
+  Page->>Wrapper: Configure targetPageParamsAll and flicker handler
+  Page->>ID: Resolve analytics.user().anonymousId()
+  OT-->>Page: Active groups
+  Page->>Wrapper: Evaluate Target consent category
+  alt Target consent granted
+    Wrapper->>Page: Hide Target area until Target completes or timeout passes
+    Wrapper->>ID: Wait for MetaRouter anonymous ID
+    ID-->>Wrapper: mbox3rdPartyId value
+    Wrapper->>Target: Inject at.js
+    Target-->>Page: Apply activity / experience
+    Target-->>Bridge: REQUEST_SUCCEEDED + responseTokens
+    Bridge->>MR: metaTagger.track("Adobe Target Decision", experience_name, experience_type, event222)
+    MR->>AA: Map readable properties to Adobe Analytics variables
+  else No consent
+    Wrapper-->>Page: Keep Target blocked
+  end
+        </pre>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
